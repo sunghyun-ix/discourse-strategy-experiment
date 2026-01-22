@@ -4,7 +4,6 @@ import time
 import random
 
 # [SECURITY] Get keys from Streamlit Secrets
-# 주의: 이 파일에는 절대 'sk-...' 키를 직접 적지 마세요!
 if "OPENAI_API_KEY" in st.secrets:
     api_key = st.secrets["OPENAI_API_KEY"]
     ASST_ID_A = st.secrets["ASST_ID_A"]
@@ -28,12 +27,22 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# [SIDEBAR]
+# [SIDEBAR] Experiment Controls
 with st.sidebar:
     st.header("📋 Experiment Controls")
+    
+    # 1. Reset Button (NEW!) - 가장 위에 배치하여 실수 방지
+    if st.button("🔄 Reset for New Participant", type="primary"):
+        st.session_state.clear()  # 모든 기억 삭제
+        st.rerun()                # 화면 새로고침
+
+    st.divider()
+
     participant_id = st.text_input("Participant ID", value="P01")
+    
     st.divider()
     
+    # 2. Random Assignment
     if "assigned_condition" not in st.session_state:
         st.session_state.assigned_condition = random.choice(["Condition A", "Condition B"])
     
@@ -45,6 +54,7 @@ with st.sidebar:
 
     st.divider()
 
+    # 3. Download Log
     if st.button("💾 Download Log"):
         if "messages" in st.session_state:
             log_text = f"Participant ID: {participant_id}\nCondition: {st.session_state.assigned_condition}\n" + "="*30 + "\n\n"
@@ -71,17 +81,21 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# Initialize Session State
 if "thread_id" not in st.session_state:
     thread = client.beta.threads.create()
     st.session_state.thread_id = thread.id
     st.session_state.messages = []
 
+# Condition Check
 current_asst_id = ASST_ID_A if st.session_state.assigned_condition == "Condition A" else ASST_ID_B
 
+# Display Chat History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
+# User Input
 if prompt := st.chat_input("Type your message here..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
