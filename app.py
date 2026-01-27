@@ -27,43 +27,65 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# [SIDEBAR] Experiment Controls
+# =========================================================
+# [SIDEBAR] Admin Panel (Password Protected)
+# =========================================================
 with st.sidebar:
-    st.header("📋 Experiment Controls")
+    st.title("🛡️ Admin Panel")
     
-    # 1. Reset Button (NEW!) - 가장 위에 배치하여 실수 방지
-    if st.button("🔄 Reset for New Participant", type="primary"):
-        st.session_state.clear()  # 모든 기억 삭제
-        st.rerun()                # 화면 새로고침
-
-    st.divider()
-
+    # 1. participant ID 
     participant_id = st.text_input("Participant ID", value="P01")
     
     st.divider()
     
-    # 2. Random Assignment
-    if "assigned_condition" not in st.session_state:
-        st.session_state.assigned_condition = random.choice(["Condition A", "Condition B"])
+    # 2. experiment manager access password 
+    st.markdown("### 🔒 Researcher Access")
+    admin_pass = st.text_input("Enter Password to Unlock", type="password")
+
+    # 3. right password and pop up admin controls 
+    if admin_pass == "1357":  
+        st.success("Admin Mode Unlocked! 🔓")
+        
+        # (1) reset session for new participants 
+        if st.button("🔄 Reset for New Participant", type="primary"):
+            st.session_state.clear()
+            st.rerun()
+            
+        st.divider()
+
+        # (2) assigned condition display 
+        if "assigned_condition" not in st.session_state:
+            st.session_state.assigned_condition = random.choice(["Condition A", "Condition B"])
+        
+        # (3) condition confirmation and manual override 
+        st.write(f"**Current Condition:**")
+        st.info(f"{st.session_state.assigned_condition}")
+        
+        change_cond = st.checkbox("Manual Override")
+        if change_cond:
+            st.session_state.assigned_condition = st.radio("Force Condition:", ("Condition A", "Condition B"))
+
+        st.divider()
+
+        # (4) log download 
+        if st.button("💾 Download Log"):
+            if "messages" in st.session_state:
+                log_text = f"Participant ID: {participant_id}\nCondition: {st.session_state.assigned_condition}\n" + "="*30 + "\n\n"
+                for msg in st.session_state.messages:
+                    log_text += f"[{msg['role'].upper()}]\n{msg['content']}\n\n"
+                file_name = f"{participant_id}_{st.session_state.assigned_condition.replace(' ', '')}_Log.txt"
+                st.download_button(label="Click to Save File", data=log_text, file_name=file_name, mime="text/plain")
     
-    st.caption(f"Current Condition: **{st.session_state.assigned_condition}**")
-    
-    change_cond = st.checkbox("Manual Override (Researcher Only)")
-    if change_cond:
-        st.session_state.assigned_condition = st.radio("Force Condition:", ("Condition A", "Condition B"))
+    else:
+        #  password incorrect or not entered
+        if "assigned_condition" not in st.session_state:
+             st.session_state.assigned_condition = random.choice(["Condition A", "Condition B"])
+        st.caption("Enter password to view controls.")
 
-    st.divider()
-
-    # 3. Download Log
-    if st.button("💾 Download Log"):
-        if "messages" in st.session_state:
-            log_text = f"Participant ID: {participant_id}\nCondition: {st.session_state.assigned_condition}\n" + "="*30 + "\n\n"
-            for msg in st.session_state.messages:
-                log_text += f"[{msg['role'].upper()}]\n{msg['content']}\n\n"
-            file_name = f"{participant_id}_{st.session_state.assigned_condition.replace(' ', '')}_Log.txt"
-            st.download_button(label="Click to Save File", data=log_text, file_name=file_name, mime="text/plain")
-
+# =========================================================
 # [MAIN INTERFACE]
+# =========================================================
+
 st.markdown("<div class='main-title'>🤖 AI Co-Writer Partner</div>", unsafe_allow_html=True)
 st.markdown(f"""
 <div class='welcome-box'>
