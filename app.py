@@ -1,142 +1,330 @@
 import streamlit as st
 from openai import OpenAI
-import time
 import random
+import time
+import json
 
-# [SECURITY] Get keys from Streamlit Secrets
+# [SECURITY] OpenAI API Key
 if "OPENAI_API_KEY" in st.secrets:
     api_key = st.secrets["OPENAI_API_KEY"]
-    ASST_ID_A = st.secrets["ASST_ID_A"]
-    ASST_ID_B = st.secrets["ASST_ID_B"]
 else:
-    st.error("Error: Secrets are not set. Please add them in Streamlit Cloud settings.")
+    st.error("🚨 Error: OPENAI_API_KEY not found in Secrets.")
     st.stop()
 
+# [MODEL SETTING] - 2024-04-09 snapshot version of gpt-4-turbo, which is the most recent version as of June 2024.
 client = OpenAI(api_key=api_key)
+MODEL_VERSION = "gpt-4-turbo-2024-04-09"
 
-st.set_page_config(page_title="Sci-Fi Experiment", page_icon="🧪", layout="wide")
+st.set_page_config(page_title="Sci-Fi Writing Experiment", page_icon="🧪", layout="wide")
+
+# =========================================================
+# [JAVASCRIPT TIMER] countdown time display 
+# =========================================================
+def show_timer(minutes, message="Time Remaining"):
+    seconds = minutes * 60
+    timer_html = f"""
+        <div style="
+            position: fixed; top: 60px; right: 20px; 
+            background-color: #fff0f6; border: 2px solid #d63384; 
+            padding: 10px 20px; border-radius: 10px; 
+            font-size: 1.2rem; font-weight: bold; color: #d63384; 
+            z-index: 9999; box-shadow: 0px 4px 6px rgba(0,0,0,0.1);">
+            ⏳ {message}: <span id="time">Loading...</span>
+        </div>
+        <script>
+        function startTimer(duration, display) {{
+            var timer = duration, minutes, seconds;
+            var interval = setInterval(function () {{
+                minutes = parseInt(timer / 60, 10);
+                seconds = parseInt(timer % 60, 10);
+
+                minutes = minutes < 10 ? "0" + minutes : minutes;
+                seconds = seconds < 10 ? "0" + seconds : seconds;
+
+                display.textContent = minutes + ":" + seconds;
+
+                if (--timer < 0) {{
+                    clearInterval(interval);
+                    display.textContent = "00:00";
+                    alert("Time is up! Please ask the researcher for next steps.");
+                }}
+            }}, 1000);
+        }}
+        window.onload = function () {{
+            var duration = {seconds};
+            var display = document.querySelector('#time');
+            startTimer(duration, display);
+        }};
+        </script>
+    """
+    st.components.v1.html(timer_html, height=0)
 
 # [CSS STYLING]
 st.markdown("""
     <style>
-    .main-title { font-size: 3rem; font-weight: 700; text-align: center; color: #1E1E1E; margin-bottom: 10px; }
-    .welcome-box { background-color: #f0f2f6; padding: 30px; border-radius: 15px; text-align: center; margin-bottom: 30px; border: 1px solid #e0e0e0; }
-    .welcome-text { font-size: 1.5rem; font-weight: 600; color: #333; }
-    .instruction-text { font-size: 1.1rem; color: #555; margin-top: 15px; }
-    .highlight { color: #FF4B4B; font-weight: bold; }
+    .main-title { font-size: 2.2rem; font-weight: 700; text-align: center; color: #1E1E1E; margin-bottom: 10px; }
+    .phase-header { font-size: 1.5rem; font-weight: 600; color: #0068C9; margin-bottom: 20px; text-align: center; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+    .instruction-box { background-color: #f8f9fa; padding: 25px; border-radius: 10px; border: 1px solid #ddd; margin-bottom: 20px; line-height: 1.6; }
+    .stTextArea textarea { font-size: 1.1rem !important; line-height: 1.6 !important; font-family: 'Arial', sans-serif !important; height: 500px !important; }
     </style>
 """, unsafe_allow_html=True)
 
+# [SESSION STATE INITIALIZATION]
+if "participant_id" not in st.session_state: st.session_state.participant_id = None
+if "assigned_group" not in st.session_state: st.session_state.assigned_group = None
+if "current_phase" not in st.session_state: st.session_state.current_phase = "Login"
+if "messages" not in st.session_state: st.session_state.messages = []
+if "story_content" not in st.session_state: st.session_state.story_content = ""
+
 # =========================================================
-# [SIDEBAR] Admin Panel (Password Protected)
+# [CONTENT SETTINGS] - System Prompts & User Guides
+# =========================================================
+
+# 1. AI System Prompts (Hidden from User)
+SYS_PROMPT_STRATEGIC = """
+You are a Generative AI partner for a creative writing brainstorming session.
+Today, the user will be writing a short Sci-Fi story.
+You must strictly follow the "Discourse Engineering" guidelines:
+1. Construction: Do not just accept ideas. Ask thoughtful questions.
+2. Co-construction: Combine user ideas with yours. Aim for shared conclusions.
+3. Conflict: Question assumptions. Engage in critical dialogue.
+"""
+
+SYS_PROMPT_BASELINE = """
+You are a helpful, friendly AI writing assistant.
+Your goal is to help the user brainstorm a Sci-Fi story.
+Guidelines:
+1. Be Supportive & Natural.
+2. Be Reactive: Answer questions clearly. Do not proactively lead or critique unless asked.
+3. Follow the User: Assist, do not teach.
+"""
+
+# 2. Human Guidelines (Phase 0) - Blind to Condition Names
+# "Instruction A" / "Instruction B" 
+GUIDE_INSTRUCTED = """
+<h3 style='color:#333;'>🎯 Guidelines for Brainstorming</h3>
+<p>To get the best results, try using the following strategies when chatting with the AI:</p>
+<ul>
+    <li><b>Dig Deeper:</b> Don't just accept the first answer. Ask follow-up questions.</li>
+    <li><b>Collaborate:</b> Combine the AI's ideas with your own. Treat it as a partnership.</li>
+    <li><b>Challenge:</b> Don't be afraid to disagree. Challenge assumptions to fix logical holes.</li>
+</ul>
+"""
+
+GUIDE_NEUTRAL = """
+<h3 style='color:#333;'>🎯 Guidelines for Brainstorming</h3>
+<p>You will brainstorm a Sci-Fi story with an AI partner.</p>
+<ul>
+    <li>Chat naturally as you would with a human partner.</li>
+    <li>Discuss characters, settings, and plots together.</li>
+    <li>Feel free to ask for ideas or feedback anytime.</li>
+</ul>
+"""
+
+# [GROUP DEFINITION] 
+# type: 연구자만 보는 라벨
+GROUPS = {
+    "G1": {"type": "Instructed_Strategic", "guide": GUIDE_INSTRUCTED, "sys_prompt": SYS_PROMPT_STRATEGIC},
+    "G2": {"type": "Instructed_Baseline", "guide": GUIDE_INSTRUCTED, "sys_prompt": SYS_PROMPT_BASELINE},
+    "G3": {"type": "Neutral_Strategic",    "guide": GUIDE_NEUTRAL,    "sys_prompt": SYS_PROMPT_STRATEGIC},
+    "G4": {"type": "Neutral_Baseline",     "guide": GUIDE_NEUTRAL,    "sys_prompt": SYS_PROMPT_BASELINE},
+}
+
+# =========================================================
+# [SIDEBAR] ADMIN PANEL (Researcher Only)
 # =========================================================
 with st.sidebar:
-    st.title("🛡️ Admin Panel")
-    
-    # 1. participant ID 
-    participant_id = st.text_input("Participant ID", value="P01")
-    
-    st.divider()
-    
-    # 2. experiment manager access password 
-    st.markdown("### 🔒 Researcher Access")
-    admin_pass = st.text_input("Enter Password to Unlock", type="password")
+    st.title("🛡️ Researcher Admin")
+    st.info("Pass: 1234") 
+    admin_pass = st.text_input("Admin Password", type="password")
 
-    # 3. right password and pop up admin controls 
-    if admin_pass == "1357":  
-        st.success("Admin Mode Unlocked! 🔓")
+    if admin_pass == "1234":
+        st.success("Unlocked")
         
-        # (1) reset session for new participants 
-        if st.button("🔄 Reset for New Participant", type="primary"):
-            st.session_state.clear()
+        st.markdown("---")
+        st.markdown("### 📊 Status Monitor")
+        # monitoring session by researcher 
+        if st.session_state.participant_id:
+            st.write(f"**Participant:** {st.session_state.participant_id}")
+            # group information only visible to researcher 
+            grp = st.session_state.assigned_group
+            st.write(f"**Group:** {grp} ({GROUPS[grp]['type']})")
+            st.write(f"**Phase:** {st.session_state.current_phase}")
+        else:
+            st.warning("No participant logged in.")
+
+        st.markdown("---")
+        st.markdown("### 🕹️ Controls")
+        
+        # [PHASE CONTROL] 강제 이동
+        phase_options = ["Login", "Phase 0: Instruction", "Phase 1: Brainstorming", "Phase 2: Writing", "Submission"]
+        try: idx = phase_options.index(st.session_state.current_phase)
+        except: idx = 0
+        new_phase = st.selectbox("Force Phase Jump:", phase_options, index=idx)
+        if st.button("Go to Phase"):
+            st.session_state.current_phase = new_phase
             st.rerun()
             
-        st.divider()
-
-        # (2) assigned condition display 
-        if "assigned_condition" not in st.session_state:
-            st.session_state.assigned_condition = random.choice(["Condition A", "Condition B"])
+        st.markdown("---")
+        st.markdown("### 💾 Data Management")
         
-        # (3) condition confirmation and manual override 
-        st.write(f"**Current Condition:**")
-        st.info(f"{st.session_state.assigned_condition}")
-        
-        change_cond = st.checkbox("Manual Override")
-        if change_cond:
-            st.session_state.assigned_condition = st.radio("Force Condition:", ("Condition A", "Condition B"))
+        # [DOWNLOAD LOG] researcher only
+        if st.session_state.participant_id:
+            log_data = {
+                "participant_id": st.session_state.participant_id,
+                "assigned_group": st.session_state.assigned_group,
+                "condition_detail": GROUPS[st.session_state.assigned_group]['type'],
+                "final_story": st.session_state.story_content,
+                "chat_history": st.session_state.messages
+            }
+            json_str = json.dumps(log_data, indent=2, ensure_ascii=False)
+            file_name = f"LOG_{st.session_state.participant_id}_{st.session_state.assigned_group}.json"
+            
+            st.download_button(
+                label="📥 Download Log JSON",
+                data=json_str,
+                file_name=file_name,
+                mime="application/json",
+                type="primary"
+            )
+        else:
+            st.caption("No data to download yet.")
 
-        st.divider()
+        st.markdown("---")
+        # [RESET]
+        if st.button("⚠️ RESET FOR NEXT PARTICIPANT", type="primary"):
+            st.session_state.clear() # all session state clear
+            st.rerun()
 
-        # (4) log download 
-        if st.button("💾 Download Log"):
-            if "messages" in st.session_state:
-                log_text = f"Participant ID: {participant_id}\nCondition: {st.session_state.assigned_condition}\n" + "="*30 + "\n\n"
-                for msg in st.session_state.messages:
-                    log_text += f"[{msg['role'].upper()}]\n{msg['content']}\n\n"
-                file_name = f"{participant_id}_{st.session_state.assigned_condition.replace(' ', '')}_Log.txt"
-                st.download_button(label="Click to Save File", data=log_text, file_name=file_name, mime="text/plain")
+# =========================================================
+# [MAIN FLOW]
+# =========================================================
+
+# --- STEP 1: LOGIN (participant) ---
+if st.session_state.current_phase == "Login":
+    st.markdown("<div class='main-title'>🧪 Sci-Fi Co-Writing Experiment</div>", unsafe_allow_html=True)
+    st.info("Welcome. Please enter your ID to begin.")
     
-    else:
-        #  password incorrect or not entered
-        if "assigned_condition" not in st.session_state:
-             st.session_state.assigned_condition = random.choice(["Condition A", "Condition B"])
-        st.caption("Enter password to view controls.")
+    with st.form("login_form"):
+        p_id = st.text_input("Participant ID (e.g., P01):")
+        submitted = st.form_submit_button("Start Experiment")
+        
+        if submitted and p_id:
+            st.session_state.participant_id = p_id
+            # [RANDOM ASSIGNMENT] 4개 중 하나 랜덤 배정 (여기서 확정됨)
+            st.session_state.assigned_group = random.choice(list(GROUPS.keys()))
+            st.session_state.current_phase = "Phase 0: Instruction"
+            st.rerun()
 
-# =========================================================
-# [MAIN INTERFACE]
-# =========================================================
+# --- STEP 2: INSTRUCTION (5 Min) ---
+elif st.session_state.current_phase == "Phase 0: Instruction":
+    show_timer(5, "Reading Time")
+    
+    st.markdown(f"<div class='phase-header'>Step 1: Guidelines (5 min)</div>", unsafe_allow_html=True)
+    
+    # assigned group guideline(blind to condition names)
+    group_settings = GROUPS[st.session_state.assigned_group]
+    st.markdown(f"<div class='instruction-box'>{group_settings['guide']}</div>", unsafe_allow_html=True)
+    
+    st.write("")
+    st.info("Please read the instructions carefully. Click below when ready.")
+    
+    if st.button("Start Brainstorming (Go to Step 2) 👉"):
+        st.session_state.current_phase = "Phase 1: Brainstorming"
+        st.rerun()
 
-st.markdown("<div class='main-title'>🤖 AI Co-Writer Partner</div>", unsafe_allow_html=True)
-st.markdown(f"""
-<div class='welcome-box'>
-    <p class='welcome-text'>Hello, {participant_id}! 👋</p>
-    <p class='instruction-text'>I am your creative partner for this session.<br>Together, we will write a <span class='highlight'>Science-Fiction story</span> (approx. 500 words).</p>
-    <hr style="margin: 20px 0;">
-    <div style="text-align: left; display: inline-block; background-color: white; padding: 20px; border-radius: 10px;">
-        <h4 style="margin-top: 0;">💡 How to collaborate:</h4>
-        <ul style="margin-bottom: 0;">
-            <li>Treat me as a fellow writer, not just a tool.</li>
-            <li>Discuss ideas, characters, and settings with me freely.</li>
-            <li>Our goal is a complete story with a <b>beginning, middle, and end.</b></li>
-        </ul>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+# --- STEP 3: BRAINSTORMING (15 Min) ---
+elif st.session_state.current_phase == "Phase 1: Brainstorming":
+    show_timer(15, "Brainstorming")
+    
+    st.markdown(f"<div class='phase-header'>Step 2: Brainstorming with AI (15 min)</div>", unsafe_allow_html=True)
+    
+    group_settings = GROUPS[st.session_state.assigned_group]
+    
+    # Chat UI
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-# Initialize Session State
-if "thread_id" not in st.session_state:
-    thread = client.beta.threads.create()
-    st.session_state.thread_id = thread.id
-    st.session_state.messages = []
+    if prompt := st.chat_input("Brainstorm ideas here..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"): st.markdown(prompt)
 
-# Condition Check
-current_asst_id = ASST_ID_A if st.session_state.assigned_condition == "Condition A" else ASST_ID_B
+        # Chat Completions API Call (System Prompt Injection)
+        messages_payload = [{"role": "system", "content": group_settings["sys_prompt"]}] + st.session_state.messages
+        
+        with st.spinner("AI is thinking..."):
+            try:
+                response = client.chat.completions.create(
+                    model=MODEL_VERSION,
+                    messages=messages_payload,
+                    temperature=0.7,
+                    max_tokens=400
+                )
+                ai_msg = response.choices[0].message.content
+                st.session_state.messages.append({"role": "assistant", "content": ai_msg})
+                with st.chat_message("assistant"): st.markdown(ai_msg)
+            except Exception as e:
+                st.error(f"API Error: {e}")
 
-# Display Chat History
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col3:
+        if st.button("Finish Brainstorming & Start Writing 👉", type="primary"):
+            st.session_state.current_phase = "Phase 2: Writing"
+            st.rerun()
 
-# User Input
-if prompt := st.chat_input("Type your message here..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+# --- STEP 4: WRITING (25 Min) ---
+elif st.session_state.current_phase == "Phase 2: Writing":
+    show_timer(25, "Writing Time")
+    
+    st.markdown(f"<div class='phase-header'>Step 3: Writing Story (25 min)</div>", unsafe_allow_html=True)
+    
+    col_left, col_right = st.columns([1, 1], gap="large")
+    
+    with col_left:
+        st.info("💬 Chat History (Review Only)")
+        with st.container(height=600):
+            for msg in st.session_state.messages:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+    
+    with col_right:
+        st.warning("📝 Write your 500-word Sci-Fi Story")
+        story_input = st.text_area("Start writing here...", value=st.session_state.story_content, height=500)
+        st.session_state.story_content = story_input
+        st.caption(f"Word Count: {len(story_input.split())}")
+        
+        st.markdown("---")
+        if st.button("✅ Submit Story", type="primary", use_container_width=True):
+            st.session_state.current_phase = "Submission"
+            st.rerun()
 
-    client.beta.threads.messages.create(thread_id=st.session_state.thread_id, role="user", content=prompt)
-    run = client.beta.threads.runs.create(thread_id=st.session_state.thread_id, assistant_id=current_asst_id)
-
-    with st.spinner("AI Partner is thinking..."):
-        while run.status != "completed":
-            time.sleep(1)
-            run = client.beta.threads.runs.retrieve(thread_id=st.session_state.thread_id, run_id=run.id)
-            if run.status in ["failed", "cancelled", "expired"]:
-                st.error("Error occurred. Please refresh the page.")
-                break
-
-    if run.status == "completed":
-        messages = client.beta.threads.messages.list(thread_id=st.session_state.thread_id)
-        ai_response = messages.data[0].content[0].text.value
-        st.session_state.messages.append({"role": "assistant", "content": ai_response})
-        with st.chat_message("assistant"):
-            st.markdown(ai_response)
+# --- STEP 5: SUBMISSION (Survey Link) ---
+elif st.session_state.current_phase == "Submission":
+    st.markdown("<div class='main-title'>🎉 Experiment Completed!</div>", unsafe_allow_html=True)
+    st.success("Your story has been submitted.")
+    
+    # [FIXED] 박사님의 진짜 퀄트릭스 링크 적용
+    qualtrics_base_url = "https://iu.co1.qualtrics.com/jfe/form/SV_0iJ9n921PlFCxNQ"
+    
+    # URL 뒤에 꼬리표(PID, GROUP) 붙이기
+    # 결과 예시: .../SV_0iJ9n921PlFCxNQ?PID=P01&GROUP=G1
+    final_link = f"{qualtrics_base_url}?PID={st.session_state.participant_id}&GROUP={st.session_state.assigned_group}"
+    
+    st.markdown(f"""
+        <div style="background-color:#e8f4fd; padding:30px; border-radius:10px; text-align:center; margin-top:20px;">
+            <h3>👇 Final Step</h3>
+            <p style="font-size:1.1rem;">Please click the link below to complete the post-experiment survey.</p>
+            <br>
+            <a href="{final_link}" target="_blank" style="
+                background-color: #0068C9; color: white; padding: 18px 30px; 
+                text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 1.3rem; 
+                box-shadow: 0px 4px 6px rgba(0,0,0,0.1);">
+                Go to Post-Survey 🔗
+            </a>
+            <br><br>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.warning("Please notify the researcher that you have finished.")
