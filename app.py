@@ -3,6 +3,7 @@ from openai import OpenAI
 import random
 import time
 import json
+import datetime
 
 # [SECURITY] OpenAI API Key
 if "OPENAI_API_KEY" in st.secrets:
@@ -11,17 +12,30 @@ else:
     st.error("🚨 Error: OPENAI_API_KEY not found in Secrets.")
     st.stop()
 
-# [MODEL SETTING] - 2024-04-09 snapshot version of gpt-4-turbo, which is the most recent version as of June 2024.
+# [MODEL SETTING] - 2024-04-09 snapshot of gpt-4-turbo with improved reasoning and creativity
 client = OpenAI(api_key=api_key)
 MODEL_VERSION = "gpt-4-turbo-2024-04-09"
 
 st.set_page_config(page_title="Sci-Fi Writing Experiment", page_icon="🧪", layout="wide")
 
 # =========================================================
-# [JAVASCRIPT TIMER] countdown time display 
+# [TIME MANAGEMENT] 
 # =========================================================
-def show_timer(minutes, message="Time Remaining"):
-    seconds = minutes * 60
+def init_phase_timer():
+    if "phase_start_time" not in st.session_state:
+        st.session_state.phase_start_time = datetime.datetime.now()
+
+def get_remaining_seconds(duration_minutes):
+    if "phase_start_time" not in st.session_state:
+        init_phase_timer()
+    elapsed = (datetime.datetime.now() - st.session_state.phase_start_time).total_seconds()
+    remaining = (duration_minutes * 60) - elapsed
+    return max(0, int(remaining))
+
+# [JAVASCRIPT TIMER] 
+def show_timer(duration_minutes, message="Time Remaining"):
+    remaining_sec = get_remaining_seconds(duration_minutes)
+    
     timer_html = f"""
         <div style="
             position: fixed; top: 60px; right: 20px; 
@@ -45,13 +59,13 @@ def show_timer(minutes, message="Time Remaining"):
 
                 if (--timer < 0) {{
                     clearInterval(interval);
-                    display.textContent = "00:00";
-                    alert("Time is up! Please ask the researcher for next steps.");
+                    display.textContent = "Time's Up!";
+                    alert("Time is up! The 'Next' button is now active.");
                 }}
             }}, 1000);
         }}
         window.onload = function () {{
-            var duration = {seconds};
+            var duration = {remaining_sec};
             var display = document.querySelector('#time');
             startTimer(duration, display);
         }};
@@ -77,57 +91,70 @@ if "messages" not in st.session_state: st.session_state.messages = []
 if "story_content" not in st.session_state: st.session_state.story_content = ""
 
 # =========================================================
-# [CONTENT SETTINGS] - System Prompts & User Guides
+# [CONTENT SETTINGS] - System Prompts & Images
 # =========================================================
 
-# 1. AI System Prompts (Hidden from User)
+# 1. Strategic AI Prompt (Discourse Engineering)
 SYS_PROMPT_STRATEGIC = """
-You are a Generative AI partner for a creative writing brainstorming session.
-Today, the user will be writing a short Sci-Fi story.
-You must strictly follow the "Discourse Engineering" guidelines:
-1. Construction: Do not just accept ideas. Ask thoughtful questions.
-2. Co-construction: Combine user ideas with yours. Aim for shared conclusions.
-3. Conflict: Question assumptions. Engage in critical dialogue.
+You are a Generative AI (GenAI) partner for a creative writing brainstorming session. Today, the user will be writing a short Science-Fiction story that is minimum 500-600 words. Before they start writing, you will brainstorm ideas for the story with the user for 15 minutes. Your goal is to work with the user to develop ideas for the story’s characters, settings, and plotline with a clear beginning, middle, and end. 
+
+You must strictly follow the “Discourse Engineering” guidelines below to effectively and efficiently collaborate with the user. 
+
+What is Discourse Engineering? 
+
+Discourse engineering is your guide for structuring your chats so that you can tackle a big creative agenda, like building a great story, together, step by step. Instead of just answering a simple prompt, you must help the user move their ideas from a simple concept to a richer, more thoughtful narrative via discourse. You do this by working through three key stages: Construction, Co-construction, and Conflict. 
+
+How to apply Discourse Engineering (Your Instructions): 
+
+1. Construction 
+This initial step involves exploring and developing early ideas. You must use thoughtful questions to help the user move beyond surface-level thinking. 
+
+Action: When the user shares initial ideas, thoughts, characters, or settings, do not just accept them. 
+Action: Ask more questions that help you and the user elaborate on each other’s information and ideas. 
+Action: Listen carefully to the user's suggestions and let them spark new ideas in your responses. 
+Action: If something is unclear in the interaction, ask clarifying questions to the user. 
+
+2. Co-construction 
+This phase follows the construction step; you and the user must build on each other’s ideas through ongoing conversation, making the story richer. 
+
+Action: Combine the user's suggestions with your own imagination. 
+Action: Talk through ideas together, letting the story grow and change (aim for shared conclusions from the discussion). 
+Action: If there are differences of opinions, handle them by addressing them directly. 
+Action: Use feedback to refine ideas collaboratively. 
+
+3. Conflict 
+This phase helps to find the blind spot of the idea and improve creative concepts and the story. 
+
+Action: Review the story’s main ideas and ensure co-construction ideas are aligned. 
+Action: Question the user's assumptions and engage in critical dialogue to validate the ideas and approaches. (Do not just agree with everything). 
+Action: Work with the user to build a common understanding of the story and the best methods for tackling the creative process. 
 """
 
+# 2. Baseline AI Prompt (Non-Discourse / Control) - [UPDATED]
 SYS_PROMPT_BASELINE = """
-You are a helpful, friendly AI writing assistant.
-Your goal is to help the user brainstorm a Sci-Fi story.
-Guidelines:
-1. Be Supportive & Natural.
-2. Be Reactive: Answer questions clearly. Do not proactively lead or critique unless asked.
-3. Follow the User: Assist, do not teach.
+You are a helpful AI assistant for creative writing. Your task is to help the user write a short Science-Fiction story.
+
+[Instructions] 
+- Be friendly, responsive, and encouraging. 
+- Follow the user's lead completely. 
+- If the user asks for ideas, provide them freely. 
+- If the user asks you to write a section, do so immediately. 
+- Do not impose any specific structured workflow or critique phases unless specifically asked.
 """
 
-# 2. Human Guidelines (Phase 0) - Blind to Condition Names
-# "Instruction A" / "Instruction B" 
-GUIDE_INSTRUCTED = """
-<h3 style='color:#333;'>🎯 Guidelines for Brainstorming</h3>
-<p>To get the best results, try using the following strategies when chatting with the AI:</p>
-<ul>
-    <li><b>Dig Deeper:</b> Don't just accept the first answer. Ask follow-up questions.</li>
-    <li><b>Collaborate:</b> Combine the AI's ideas with your own. Treat it as a partnership.</li>
-    <li><b>Challenge:</b> Don't be afraid to disagree. Challenge assumptions to fix logical holes.</li>
-</ul>
-"""
+# 3. Guideline Images (Filename Check Required!)
+# (Discourse Strategy): 3pictures
+IMAGES_EXP = ["Discourse_page1.png", "Discourse_page2.png", "Discourse_page3.png"]
 
-GUIDE_NEUTRAL = """
-<h3 style='color:#333;'>🎯 Guidelines for Brainstorming</h3>
-<p>You will brainstorm a Sci-Fi story with an AI partner.</p>
-<ul>
-    <li>Chat naturally as you would with a human partner.</li>
-    <li>Discuss characters, settings, and plots together.</li>
-    <li>Feel free to ask for ideas or feedback anytime.</li>
-</ul>
-"""
+# (Baseline): 1picture
+IMAGES_CTRL = ["Discourse_absent_page1.png"] 
 
 # [GROUP DEFINITION] 
-# type: 연구자만 보는 라벨
 GROUPS = {
-    "G1": {"type": "Instructed_Strategic", "guide": GUIDE_INSTRUCTED, "sys_prompt": SYS_PROMPT_STRATEGIC},
-    "G2": {"type": "Instructed_Baseline", "guide": GUIDE_INSTRUCTED, "sys_prompt": SYS_PROMPT_BASELINE},
-    "G3": {"type": "Neutral_Strategic",    "guide": GUIDE_NEUTRAL,    "sys_prompt": SYS_PROMPT_STRATEGIC},
-    "G4": {"type": "Neutral_Baseline",     "guide": GUIDE_NEUTRAL,    "sys_prompt": SYS_PROMPT_BASELINE},
+    "G1": {"type": "Instructed_Strategic", "guide": IMAGES_EXP,  "sys_prompt": SYS_PROMPT_STRATEGIC},
+    "G2": {"type": "Instructed_Baseline",  "guide": IMAGES_EXP,  "sys_prompt": SYS_PROMPT_BASELINE},
+    "G3": {"type": "Neutral_Strategic",    "guide": IMAGES_CTRL, "sys_prompt": SYS_PROMPT_STRATEGIC},
+    "G4": {"type": "Neutral_Baseline",     "guide": IMAGES_CTRL, "sys_prompt": SYS_PROMPT_BASELINE},
 }
 
 # =========================================================
@@ -135,40 +162,42 @@ GROUPS = {
 # =========================================================
 with st.sidebar:
     st.title("🛡️ Researcher Admin")
-    st.info("Pass: 1234") 
     admin_pass = st.text_input("Admin Password", type="password")
 
-    if admin_pass == "1234":
+    if admin_pass == "1357":
         st.success("Unlocked")
         
         st.markdown("---")
         st.markdown("### 📊 Status Monitor")
-        # monitoring session by researcher 
         if st.session_state.participant_id:
-            st.write(f"**Participant:** {st.session_state.participant_id}")
-            # group information only visible to researcher 
+            st.write(f"**ID:** {st.session_state.participant_id}")
             grp = st.session_state.assigned_group
             st.write(f"**Group:** {grp} ({GROUPS[grp]['type']})")
             st.write(f"**Phase:** {st.session_state.current_phase}")
+            
+            if st.button("Reset Timer"):
+                if "phase_start_time" in st.session_state:
+                    del st.session_state.phase_start_time
+                st.rerun()
         else:
             st.warning("No participant logged in.")
 
         st.markdown("---")
         st.markdown("### 🕹️ Controls")
         
-        # [PHASE CONTROL] 강제 이동
         phase_options = ["Login", "Phase 0: Instruction", "Phase 1: Brainstorming", "Phase 2: Writing", "Submission"]
         try: idx = phase_options.index(st.session_state.current_phase)
         except: idx = 0
         new_phase = st.selectbox("Force Phase Jump:", phase_options, index=idx)
         if st.button("Go to Phase"):
             st.session_state.current_phase = new_phase
+            if "phase_start_time" in st.session_state:
+                del st.session_state.phase_start_time
             st.rerun()
             
         st.markdown("---")
         st.markdown("### 💾 Data Management")
         
-        # [DOWNLOAD LOG] researcher only
         if st.session_state.participant_id:
             log_data = {
                 "participant_id": st.session_state.participant_id,
@@ -187,20 +216,17 @@ with st.sidebar:
                 mime="application/json",
                 type="primary"
             )
-        else:
-            st.caption("No data to download yet.")
 
         st.markdown("---")
-        # [RESET]
         if st.button("⚠️ RESET FOR NEXT PARTICIPANT", type="primary"):
-            st.session_state.clear() # all session state clear
+            st.session_state.clear()
             st.rerun()
 
 # =========================================================
 # [MAIN FLOW]
 # =========================================================
 
-# --- STEP 1: LOGIN (participant) ---
+# --- STEP 1: LOGIN ---
 if st.session_state.current_phase == "Login":
     st.markdown("<div class='main-title'>🧪 Sci-Fi Co-Writing Experiment</div>", unsafe_allow_html=True)
     st.info("Welcome. Please enter your ID to begin.")
@@ -211,37 +237,48 @@ if st.session_state.current_phase == "Login":
         
         if submitted and p_id:
             st.session_state.participant_id = p_id
-            # [RANDOM ASSIGNMENT] 4개 중 하나 랜덤 배정 (여기서 확정됨)
             st.session_state.assigned_group = random.choice(list(GROUPS.keys()))
             st.session_state.current_phase = "Phase 0: Instruction"
+            if "phase_start_time" in st.session_state: del st.session_state.phase_start_time
             st.rerun()
 
-# --- STEP 2: INSTRUCTION (5 Min) ---
+# --- STEP 2: INSTRUCTION ---
 elif st.session_state.current_phase == "Phase 0: Instruction":
+    init_phase_timer()
     show_timer(5, "Reading Time")
     
     st.markdown(f"<div class='phase-header'>Step 1: Guidelines (5 min)</div>", unsafe_allow_html=True)
     
-    # assigned group guideline(blind to condition names)
     group_settings = GROUPS[st.session_state.assigned_group]
-    st.markdown(f"<div class='instruction-box'>{group_settings['guide']}</div>", unsafe_allow_html=True)
+    
+    try:
+        images_to_show = group_settings['guide']
+        if isinstance(images_to_show, list):
+            for img_file in images_to_show:
+                st.image(img_file, use_column_width=True)
+        else:
+            st.image(images_to_show, use_column_width=True)
+    except Exception as e:
+        st.error(f"🚨 Image load error: {e}")
     
     st.write("")
     st.info("Please read the instructions carefully. Click below when ready.")
     
     if st.button("Start Brainstorming (Go to Step 2) 👉"):
         st.session_state.current_phase = "Phase 1: Brainstorming"
+        if "phase_start_time" in st.session_state: del st.session_state.phase_start_time
         st.rerun()
 
-# --- STEP 3: BRAINSTORMING (15 Min) ---
+# --- STEP 3: BRAINSTORMING (10 Min) ---
 elif st.session_state.current_phase == "Phase 1: Brainstorming":
-    show_timer(15, "Brainstorming")
+    init_phase_timer()
+    DURATION_MIN = 10 
+    show_timer(DURATION_MIN, "Brainstorming")
     
-    st.markdown(f"<div class='phase-header'>Step 2: Brainstorming with AI (15 min)</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='phase-header'>Step 2: Brainstorming with AI ({DURATION_MIN} min)</div>", unsafe_allow_html=True)
     
     group_settings = GROUPS[st.session_state.assigned_group]
     
-    # Chat UI
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -250,7 +287,6 @@ elif st.session_state.current_phase == "Phase 1: Brainstorming":
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
 
-        # Chat Completions API Call (System Prompt Injection)
         messages_payload = [{"role": "system", "content": group_settings["sys_prompt"]}] + st.session_state.messages
         
         with st.spinner("AI is thinking..."):
@@ -271,14 +307,21 @@ elif st.session_state.current_phase == "Phase 1: Brainstorming":
     col1, col2, col3 = st.columns([1, 2, 1])
     with col3:
         if st.button("Finish Brainstorming & Start Writing 👉", type="primary"):
-            st.session_state.current_phase = "Phase 2: Writing"
-            st.rerun()
+            remaining = get_remaining_seconds(DURATION_MIN)
+            if remaining > 0:
+                st.warning(f"⚠️ Please wait! You still have {remaining // 60}m {remaining % 60}s left.")
+            else:
+                st.session_state.current_phase = "Phase 2: Writing"
+                if "phase_start_time" in st.session_state: del st.session_state.phase_start_time
+                st.rerun()
 
-# --- STEP 4: WRITING (25 Min) ---
+# --- STEP 4: WRITING (20 Min) ---
 elif st.session_state.current_phase == "Phase 2: Writing":
-    show_timer(25, "Writing Time")
+    init_phase_timer()
+    DURATION_MIN = 20
+    show_timer(DURATION_MIN, "Writing Time")
     
-    st.markdown(f"<div class='phase-header'>Step 3: Writing Story (25 min)</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='phase-header'>Step 3: Writing Story ({DURATION_MIN} min)</div>", unsafe_allow_html=True)
     
     col_left, col_right = st.columns([1, 1], gap="large")
     
@@ -297,19 +340,19 @@ elif st.session_state.current_phase == "Phase 2: Writing":
         
         st.markdown("---")
         if st.button("✅ Submit Story", type="primary", use_container_width=True):
-            st.session_state.current_phase = "Submission"
-            st.rerun()
+            remaining = get_remaining_seconds(DURATION_MIN)
+            if remaining > 0:
+                st.warning(f"⚠️ Please keep writing! You still have {remaining // 60}m {remaining % 60}s left.")
+            else:
+                st.session_state.current_phase = "Submission"
+                st.rerun()
 
-# --- STEP 5: SUBMISSION (Survey Link) ---
+# --- STEP 5: SUBMISSION ---
 elif st.session_state.current_phase == "Submission":
     st.markdown("<div class='main-title'>🎉 Experiment Completed!</div>", unsafe_allow_html=True)
     st.success("Your story has been submitted.")
     
-    # [FIXED] 박사님의 진짜 퀄트릭스 링크 적용
     qualtrics_base_url = "https://iu.co1.qualtrics.com/jfe/form/SV_0iJ9n921PlFCxNQ"
-    
-    # URL 뒤에 꼬리표(PID, GROUP) 붙이기
-    # 결과 예시: .../SV_0iJ9n921PlFCxNQ?PID=P01&GROUP=G1
     final_link = f"{qualtrics_base_url}?PID={st.session_state.participant_id}&GROUP={st.session_state.assigned_group}"
     
     st.markdown(f"""
