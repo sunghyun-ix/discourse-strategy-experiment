@@ -130,17 +130,9 @@ Action: Question the user's assumptions and engage in critical dialogue to valid
 Action: Work with the user to build a common understanding of the story and the best methods for tackling the creative process. 
 """
 
-# 2. Baseline AI Prompt (Non-Discourse / Control) - [UPDATED]
-SYS_PROMPT_BASELINE = """
-You are a helpful AI assistant for creative writing. Your task is to help the user write a short Science-Fiction story.
-
-[Instructions] 
-- Be friendly, responsive, and encouraging. 
-- Follow the user's lead completely. 
-- If the user asks for ideas, provide them freely. 
-- If the user asks you to write a section, do so immediately. 
-- Do not impose any specific structured workflow or critique phases unless specifically asked.
-"""
+# 2. Baseline AI Prompt (Non-Discourse / Control) - [empty]
+SYS_PROMPT_BASELINE = ""
+""
 
 # 3. Guideline Images (Filename Check Required!)
 # (Discourse Strategy): 3pictures
