@@ -19,6 +19,21 @@ MODEL_VERSION = "gpt-4-turbo-2024-04-09"
 st.set_page_config(page_title="Sci-Fi Writing Experiment", page_icon="🧪", layout="wide")
 
 # =========================================================
+# [ANTI-SLEEP] app wake up 
+# =========================================================
+st.components.v1.html(
+    """
+   <script>
+    // Sends a signal to the server in the background every 5 minutes (300,000ms) to prevent connection loss.
+    setInterval(function() {
+        fetch(window.location.href, {cache: "no-store"});
+    }, 300000);
+    </script>
+    """,
+    height=0
+)
+
+# =========================================================
 # [TIME MANAGEMENT] 
 # =========================================================
 def init_phase_timer():
