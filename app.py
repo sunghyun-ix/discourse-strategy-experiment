@@ -47,17 +47,19 @@ def get_remaining_seconds(duration_minutes):
     remaining = (duration_minutes * 60) - elapsed
     return max(0, int(remaining))
 
-# [JAVASCRIPT TIMER] 
+# [JAVASCRIPT TIMER] Banner Timer (Fixed UI clipping)
 def show_timer(duration_minutes, message="Time Remaining"):
     remaining_sec = get_remaining_seconds(duration_minutes)
     
     timer_html = f"""
         <div style="
-            position: fixed; top: 60px; right: 20px; 
             background-color: #fff0f6; border: 2px solid #d63384; 
-            padding: 10px 20px; border-radius: 10px; 
-            font-size: 1.2rem; font-weight: bold; color: #d63384; 
-            z-index: 9999; box-shadow: 0px 4px 6px rgba(0,0,0,0.1);">
+            padding: 15px; border-radius: 10px; 
+            font-size: 1.5rem; font-weight: bold; color: #d63384; 
+            text-align: center; font-family: sans-serif;
+            box-shadow: 0px 4px 6px rgba(0,0,0,0.1); 
+            margin: 5px; /* Prevent clipping at the top */
+            box-sizing: border-box;">
             ⏳ {message}: <span id="time">Loading...</span>
         </div>
         <script>
@@ -85,7 +87,7 @@ def show_timer(duration_minutes, message="Time Remaining"):
         }};
         </script>
     """
-    st.components.v1.html(timer_html, height=85)
+    st.components.v1.html(timer_html, height=100)
 
 # [CSS STYLING]
 st.markdown("""
