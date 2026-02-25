@@ -59,8 +59,7 @@ def show_timer(duration_minutes, message="Time Remaining"):
 
                 if (--timer < 0) {{
                     clearInterval(interval);
-                    display.textContent = "Time's Up!";
-                    alert("Time is up! The 'Next' button is now active.");
+                    display.textContent = "00:00 (Time's Up!)";
                 }}
             }}, 1000);
         }}
@@ -71,7 +70,7 @@ def show_timer(duration_minutes, message="Time Remaining"):
         }};
         </script>
     """
-    st.components.v1.html(timer_html, height=0)
+    st.components.v1.html(timer_html, height=85)
 
 # [CSS STYLING]
 st.markdown("""
@@ -96,7 +95,7 @@ if "story_content" not in st.session_state: st.session_state.story_content = ""
 
 # 1. Strategic AI Prompt (Discourse Engineering)
 SYS_PROMPT_STRATEGIC = """
-You are a Generative AI (GenAI) partner for a creative writing brainstorming session. Today, the user will be writing a short Science-Fiction story that is minimum 500-600 words. Before they start writing, you will brainstorm ideas for the story with the user for 15 minutes. Your goal is to work with the user to develop ideas for the story’s characters, settings, and plotline with a clear beginning, middle, and end. 
+You are a Generative AI (GenAI) partner for a creative writing brainstorming session. Today, the user will be writing a short Science-Fiction story that will be between 500-600 words. Before they start writing, you will brainstorm ideas for the story with the user for 15 minutes. Your goal is to work with the user to develop ideas for the story’s characters, settings, and plotline with a clear beginning, middle, and end. 
 
 You must strictly follow the “Discourse Engineering” guidelines below to effectively and efficiently collaborate with the user. 
 
@@ -175,7 +174,7 @@ with st.sidebar:
             st.warning("No participant logged in.")
 
         st.markdown("---")
-        st.markdown("### 🕹️ Controls")
+        st.markdown("###Controls")
         
         phase_options = ["Login", "Phase 0: Instruction", "Phase 1: Brainstorming", "Phase 2: Writing", "Submission"]
         try: idx = phase_options.index(st.session_state.current_phase)
@@ -188,7 +187,7 @@ with st.sidebar:
             st.rerun()
             
         st.markdown("---")
-        st.markdown("### 💾 Data Management")
+        st.markdown("### Data Management")
         
         if st.session_state.participant_id:
             log_data = {
@@ -262,6 +261,7 @@ elif st.session_state.current_phase == "Phase 0: Instruction":
         st.rerun()
 
 # --- STEP 3: BRAINSTORMING (10 Min) ---
+# --- STEP 3: BRAINSTORMING (10 Min) ---
 elif st.session_state.current_phase == "Phase 1: Brainstorming":
     init_phase_timer()
     DURATION_MIN = 10 
@@ -271,41 +271,64 @@ elif st.session_state.current_phase == "Phase 1: Brainstorming":
     
     group_settings = GROUPS[st.session_state.assigned_group]
     
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    # [DUAL SCREEN LAYOUT]
+    col_chat, col_guide = st.columns([1.2, 1], gap="large")
+    
+    with col_chat:
+        st.info("💬 Chat with AI")
+        chat_container = st.container(height=600)
+        with chat_container:
+            for msg in st.session_state.messages:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+                    
+    with col_guide:
+        st.success("📖 Guidelines Reference")
+        guide_container = st.container(height=600)
+        with guide_container:
+            try:
+                images_to_show = group_settings['guide']
+                if isinstance(images_to_show, list):
+                    for img_file in images_to_show:
+                        st.image(img_file, use_column_width=True)
+                else:
+                    st.image(images_to_show, use_column_width=True)
+            except Exception as e:
+                st.error(f"🚨 Image load error: {e}")
 
+    # chatting input at the bottom, outside of the dual columns, to span full width
     if prompt := st.chat_input("Brainstorm ideas here..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"): st.markdown(prompt)
-
-        messages_payload = [{"role": "system", "content": group_settings["sys_prompt"]}] + st.session_state.messages
         
-        with st.spinner("AI is thinking..."):
-            try:
-                response = client.chat.completions.create(
-                    model=MODEL_VERSION,
-                    messages=messages_payload,
-                    temperature=0.7,
-                    max_tokens=400
-                )
-                ai_msg = response.choices[0].message.content
-                st.session_state.messages.append({"role": "assistant", "content": ai_msg})
-                with st.chat_message("assistant"): st.markdown(ai_msg)
-            except Exception as e:
-                st.error(f"API Error: {e}")
+        # new message puts in to chat_container 
+        with chat_container:
+            with st.chat_message("user"): 
+                st.markdown(prompt)
+
+            messages_payload = [{"role": "system", "content": group_settings["sys_prompt"]}] + st.session_state.messages
+            
+            with st.chat_message("assistant"):
+                with st.spinner("AI is thinking..."):
+                    try:
+                        response = client.chat.completions.create(
+                            model=MODEL_VERSION,
+                            messages=messages_payload,
+                            temperature=0.7,
+                            max_tokens=400
+                        )
+                        ai_msg = response.choices[0].message.content
+                        st.markdown(ai_msg)
+                        st.session_state.messages.append({"role": "assistant", "content": ai_msg})
+                    except Exception as e:
+                        st.error(f"API Error: {e}")
 
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col3:
         if st.button("Finish Brainstorming & Start Writing 👉", type="primary"):
-            remaining = get_remaining_seconds(DURATION_MIN)
-            if remaining > 0:
-                st.warning(f"⚠️ Please wait! You still have {remaining // 60}m {remaining % 60}s left.")
-            else:
-                st.session_state.current_phase = "Phase 2: Writing"
-                if "phase_start_time" in st.session_state: del st.session_state.phase_start_time
-                st.rerun()
+            st.session_state.current_phase = "Phase 2: Writing"
+            if "phase_start_time" in st.session_state: del st.session_state.phase_start_time
+            st.rerun()
 
 # --- STEP 4: WRITING (20 Min) ---
 elif st.session_state.current_phase == "Phase 2: Writing":
@@ -332,12 +355,8 @@ elif st.session_state.current_phase == "Phase 2: Writing":
         
         st.markdown("---")
         if st.button("✅ Submit Story", type="primary", use_container_width=True):
-            remaining = get_remaining_seconds(DURATION_MIN)
-            if remaining > 0:
-                st.warning(f"⚠️ Please keep writing! You still have {remaining // 60}m {remaining % 60}s left.")
-            else:
-                st.session_state.current_phase = "Submission"
-                st.rerun()
+            st.session_state.current_phase = "Submission"
+            st.rerun()
 
 # --- STEP 5: SUBMISSION ---
 elif st.session_state.current_phase == "Submission":
